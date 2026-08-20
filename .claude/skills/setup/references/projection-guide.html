@@ -1,0 +1,725 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>harness-projection — Console Guide</title>
+<style>
+  :root{
+    --bg:#0A0C10;
+    --term:#0D1117;      /* GitHub dark — target is GitHub Copilot */
+    --term-2:#010409;
+    --line:#20262E;
+    --line-2:#30363D;
+    --fg:#C9D1D9;        /* neutral machine output */
+    --fg-dim:#8B949E;
+    --fg-faint:#586069;
+    --green:#3FB950;     /* current / saved choice · success */
+    --red:#F85149;       /* error line */
+    --yellow:#D6A029;    /* non-current choices */
+    --blue:#58A6FF;      /* links · target side */
+    --purple:#D97757;    /* Claude side (Claude orange) */
+    --cyan:#4FD1DB;      /* prompt · header */
+    --input:#F0F6FC;     /* what YOU type */
+    --input-bg:rgba(79,209,219,.15);
+    --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--mono);
+    font-size:14.5px;line-height:1.65;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:920px;margin:0 auto;padding:0 22px}
+  a{color:var(--blue);text-decoration:none} a:hover{text-decoration:underline}
+  .green{color:var(--green)} .red{color:var(--red)} .yellow{color:var(--yellow)}
+  .blue{color:var(--blue)} .purple{color:var(--purple)} .dim{color:var(--fg-dim)}
+  .cyan{color:var(--cyan)} .faint{color:var(--fg-faint)}
+
+  .switcher{position:fixed;top:14px;right:14px;z-index:20;font-size:11px;
+    background:var(--term);border:1px solid var(--line-2);border-radius:8px;padding:5px 6px;display:flex;gap:2px}
+  .switcher a{padding:4px 9px;border-radius:6px;color:var(--fg-dim)}
+  .switcher a.on{background:var(--cyan);color:#04120d} .switcher a:hover{text-decoration:none;color:var(--fg)}
+
+  /* ---------- hero ---------- */
+  header{padding:78px 0 26px}
+  .sig{color:var(--fg-faint);font-size:12px;letter-spacing:.05em;margin-bottom:16px}
+  h1{font-size:clamp(25px,4.6vw,40px);line-height:1.14;margin:0;font-weight:700;letter-spacing:-.01em;color:#fff}
+  h1 .c{color:var(--purple)} h1 .g{color:var(--green)}
+  .caret{display:inline-block;width:.55ch;height:1.05em;background:var(--cyan);
+    vertical-align:-2px;margin-left:2px;animation:blink 1.1s step-end infinite}
+  @keyframes blink{50%{opacity:0}}
+  /* hero flow diagram (replaces prose intro) */
+  .flow{display:grid;grid-template-columns:1fr auto 1fr;align-items:stretch;margin-top:26px;
+    border:1px solid var(--line-2);border-radius:12px;overflow:hidden;background:var(--term)}
+  .flow .side{padding:18px 20px;display:flex;flex-direction:column}
+  .flow .side.src{border-left:3px solid var(--purple)}
+  .flow .side.tgt{border-left:3px solid var(--green)}
+  .flow .cap{font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:11px}
+  .flow .side.src .cap{color:var(--purple)} .flow .side.tgt .cap{color:var(--green)}
+  .flow .path{font-size:13.5px;color:#fff;line-height:1.95}
+  .flow .tag{margin-top:auto;padding-top:13px;font-size:12.5px;font-weight:600}
+  .flow .side.src .tag{color:var(--purple)}
+  .flow .side.tgt .tag{color:var(--red)}
+  .flow .mid{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+    padding:0 22px;border-left:1px solid var(--line);border-right:1px solid var(--line);background:var(--term-2)}
+  .flow .mid .arw{color:var(--cyan);font-size:20px;font-weight:700}
+  .flow .mid .lbl{font-size:10px;color:var(--fg-faint);letter-spacing:.08em;text-transform:uppercase;line-height:1.35}
+  @media(max-width:640px){
+    .flow{grid-template-columns:1fr}
+    .flow .side.tgt{border-left:3px solid var(--green)}
+    .flow .mid{flex-direction:row;gap:10px;padding:11px;border-left:0;border-right:0;
+      border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+    .flow .mid .arw{transform:rotate(90deg)}
+  }
+
+  /* ---------- terminal window ---------- */
+  .win{background:var(--term);border:1px solid var(--line-2);border-radius:10px;overflow:hidden;
+    margin:16px 0;box-shadow:0 16px 46px -22px rgba(0,0,0,.75)}
+  .win .bar{background:var(--term-2);padding:9px 14px;display:flex;align-items:center;gap:7px;border-bottom:1px solid var(--line)}
+  .win .bar i{width:11px;height:11px;border-radius:50%;display:inline-block}
+  .b-r{background:#FF5F57} .b-y{background:#FEBC2E} .b-g{background:#28C840}
+  .win .bar .ttl{margin-left:10px;color:var(--fg-faint);font-size:12px}
+  .win .body{padding:15px 18px;overflow-x:auto}
+  .win pre{margin:0;white-space:pre-wrap;word-break:break-word;font-size:13.2px;line-height:1.72;font-family:var(--mono)}
+  /* the recurring / "later run" window, set apart from the first-run one */
+  .runsep{display:flex;align-items:center;gap:12px;margin:26px 0 4px;color:var(--fg-faint);
+    font-size:11px;letter-spacing:.06em}
+  .runsep::before{content:"";flex:none;width:22px;height:1px;background:var(--green)}
+  .runsep::after{content:"";flex:1;height:1px;background:var(--line-2)}
+  .runsep b{color:var(--green);font-weight:700;text-transform:uppercase;letter-spacing:.1em}
+  .win.recur{border-color:color-mix(in srgb,var(--green) 50%,var(--line-2));
+    box-shadow:0 16px 46px -22px rgba(0,0,0,.75),0 0 0 1px color-mix(in srgb,var(--green) 22%,transparent)}
+  .win.recur .bar{border-bottom-color:color-mix(in srgb,var(--green) 28%,transparent)}
+  .rtag{display:inline-block;background:color-mix(in srgb,var(--green) 20%,transparent);color:var(--green);
+    border:1px solid color-mix(in srgb,var(--green) 42%,transparent);border-radius:5px;padding:1px 7px;
+    font-size:10px;letter-spacing:.05em;text-transform:uppercase;font-weight:700;margin-right:8px;vertical-align:1px}
+
+  /* transcript token roles (mirror the real ANSI colors) */
+  .t-hdr{color:var(--cyan);font-weight:700}
+  .t-src{color:var(--fg-faint)}
+  .t-dec{color:#fff;font-weight:700}
+  .t-lbl{color:var(--fg)}
+  .t-cur{color:var(--green)}       /* current choice (green) */
+  .t-opt{color:var(--yellow)}      /* other choices (yellow) */
+  .t-prompt{color:var(--cyan);font-weight:700}
+  .t-err{color:var(--red);font-weight:700}
+  .t-info{color:var(--cyan)}
+  .t-ok{color:var(--green)}
+  /* what the user types */
+  .type{color:var(--input);background:var(--input-bg);border-bottom:2px solid var(--cyan);
+    border-radius:3px;padding:0 4px;font-weight:600}
+  .kbd{color:var(--input);border:1px solid var(--line-2);border-radius:4px;padding:0 5px;font-size:.85em;background:#161b22}
+
+  /* ---------- annotation under a transcript ---------- */
+  .anno{border-left:2px solid var(--cyan);background:color-mix(in srgb,var(--cyan) 6%,transparent);
+    border-radius:0 8px 8px 0;padding:12px 16px;margin:-4px 0 22px;font-size:13.4px;color:var(--fg-dim)}
+  .anno .pin{display:inline-block;font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+    color:#04120d;background:var(--cyan);border-radius:5px;padding:2px 7px;font-weight:700;margin-right:8px;vertical-align:1px}
+  .anno b{color:var(--fg)} .anno code{color:var(--input);background:#161b22;border:1px solid var(--line);
+    border-radius:5px;padding:1px 6px;font-size:.9em}
+  .anno .row{margin-top:8px}
+  .anno .lead{color:var(--fg-faint);text-transform:uppercase;font-size:10.5px;letter-spacing:.07em;margin-right:6px}
+
+  /* ---------- sections ---------- */
+  section{padding:40px 0;border-top:1px solid var(--line)}
+  h2{font-size:20px;margin:0;color:#fff;font-weight:700}
+  h2 .hash{color:var(--green)}
+  .note{color:var(--fg-dim);font-size:14px;margin:0 0 18px;max-width:76ch}
+  ul.note{padding-left:18px} ul.note li{margin:3px 0}
+  .anno ul{margin:8px 0 0;padding-left:18px} .anno li{margin:3px 0}
+  /* dropdown titles (native details/summary) */
+  details.fold{margin:0}
+  details.fold>summary{list-style:none;cursor:pointer;user-select:none;
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    padding:4px 0;border-radius:6px;outline:none}
+  details.fold>summary::-webkit-details-marker{display:none}
+  details.fold>summary::before{content:"▸";flex:none;color:var(--cyan);font-size:14px;
+    width:1.1em;line-height:1;transition:transform .15s ease}
+  details.fold[open]>summary::before{transform:rotate(90deg)}
+  details.fold>summary:hover{color:#fff}
+  details.fold>summary:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb,var(--cyan) 55%,transparent)}
+  details.fold.sec>summary{margin-bottom:0}
+  details.fold.sec[open]>summary{margin-bottom:14px}
+  details.fold.sec>summary h2{pointer-events:none}
+  details.fold.sub{margin:26px 0 0}
+  details.fold.sub>summary{margin:0 0 6px}
+  details.fold.sub>summary h3{margin:0;font-size:16px;color:var(--fg);font-weight:600;pointer-events:none}
+  details.fold.sub>summary h3 .who{color:var(--purple)}
+  /* each §03 case is its own spaced-out block */
+  .case{margin-top:52px;padding-top:38px;border-top:1px dashed var(--line-2)}
+  .case:first-of-type{margin-top:30px}
+  .case details.fold.sub{margin-top:0}
+  .cix{font-size:11px;color:var(--cyan);border:1px solid color-mix(in srgb,var(--cyan) 35%,transparent);
+    border-radius:6px;padding:2px 8px;flex:none;font-weight:700}
+  .pill{font-size:10px;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:999px;
+    border:1px solid var(--line-2);color:var(--fg-faint)}
+  .pill.every{color:var(--green);border-color:#1c3a24}
+  .pill.change{color:var(--yellow);border-color:#3a3016}
+  @media(prefers-reduced-motion:reduce){details.fold>summary::before{transition:none}}
+
+  /* ---------- legend ---------- */
+  .legend{background:var(--term);border:1px solid var(--line-2);border-radius:10px;padding:16px 18px;margin:0 0 26px}
+  .legend .lh{color:var(--fg-dim);font-size:12px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:12px}
+  .legend .items{display:grid;grid-template-columns:repeat(2,1fr);gap:8px 26px}
+  @media(max-width:640px){.legend .items{grid-template-columns:1fr}}
+  .legend .it{font-size:13px;color:var(--fg-dim)}
+  .legend .sw{display:inline-block;min-width:2.6ch;text-align:center;font-weight:700;margin-right:8px}
+
+  /* ---------- two commands ---------- */
+  .duo{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:700px){.duo{grid-template-columns:1fr}}
+  .cc{background:var(--term);border:1px solid var(--line-2);border-radius:10px;padding:16px 18px}
+  .cc .role{font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+  .cc.fix{border-top:2px solid var(--green)} .cc.fix .role{color:var(--green)}
+  .cc.gate{border-top:2px solid var(--blue)} .cc.gate .role{color:var(--blue)}
+  .cc h3{margin:6px 0 8px;font-size:19px;color:#fff}
+  .cc .run{color:var(--green);font-size:13.5px;margin-bottom:8px}
+  .cc ul{margin:0;padding-left:16px;color:var(--fg-dim);font-size:13.5px} .cc li{margin:4px 0}
+
+  /* ---------- limitations ---------- */
+  .maprow{display:grid;grid-template-columns:130px 1fr;border:1px solid var(--line-2);border-radius:9px;
+    overflow:hidden;margin-bottom:10px;background:var(--term)}
+  .maprow .k{padding:13px 14px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+    display:flex;align-items:center;border-right:1px solid var(--line)}
+  .maprow .v{padding:13px 16px;color:var(--fg-dim);font-size:13.5px}
+  .k-exact .k{color:var(--blue)} .k-expand .k{color:var(--purple)}
+  .k-lossy .k{color:var(--yellow)} .k-drop .k{color:var(--red)}
+  @media(max-width:600px){.maprow{grid-template-columns:1fr}.maprow .k{border-right:0;border-bottom:1px solid var(--line)}}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+  .chip{font-size:11px;padding:2px 7px;border-radius:5px;background:var(--term-2);border:1px solid var(--line);color:var(--fg-dim)}
+
+  footer{padding:40px 0 64px;border-top:1px solid var(--line);color:var(--fg-faint);font-size:12px;
+    display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+  @media(prefers-reduced-motion:reduce){.caret{animation:none}}
+</style>
+</head>
+<body>
+
+<header class="wrap">
+  <div class="sig">// harness-projection · downstream user guide</div>
+  <h1><span class="c">claude</span> → <span class="g">copilot</span><span class="caret"></span></h1>
+
+  <div class="flow" aria-label="You author Claude sources; the tool generates the Copilot and VS Code files">
+    <div class="side src">
+      <div class="cap">you author &amp; edit</div>
+      <div class="path">.claude/agents/<br>.claude/rules/</div>
+      <div class="tag">the only side you touch</div>
+    </div>
+    <div class="mid">
+      <div class="arw">▶</div>
+      <div class="lbl">project</div>
+      <div class="lbl" style="color:var(--cyan);margin-top:6px">agent-<br>projection</div>
+    </div>
+    <div class="side tgt">
+      <div class="cap">generated for copilot</div>
+      <div class="path">.github/agents/<br>.github/instructions/<br>.vscode/settings.json<br>.harness-projection/decisions.json</div>
+      <div class="tag">never edit by hand</div>
+    </div>
+  </div>
+
+  <div class="win">
+    <div class="bar"><i class="b-r"></i><i class="b-y"></i><i class="b-g"></i><span class="ttl">~/your-repo — a clean sync</span></div>
+    <div class="body"><pre><span class="t-prompt">&gt;</span> <span class="type">npm run harness-setup:sync</span>
+<span class="dim">harness-projection v1</span>
+<span class="t-ok">Projected 6 Canonical Agents and 3 Scoped Instructions.</span></pre></div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- 00 setup -->
+  <section>
+    <details class="fold sec" open>
+    <summary><h2><span class="hash">#</span> 00 · one-time setup</h2></summary>
+    <ul class="note">
+      <li>ships as one file: <span class="cyan">harness-projection.mjs</span></li>
+      <li>wire it once → every command below works</li>
+      <li>needs Node&nbsp;20+ only — no <code>npm install</code>, no network</li>
+    </ul>
+
+    <details class="fold sub" open>
+    <summary><span class="cix">00.1</span><h3>Where the file lives</h3></summary>
+    <ul class="note">
+      <li>bundled at <code>.claude/skills/setup/scripts/</code></li>
+      <li>no dependencies</li>
+    </ul>
+    <div class="win">
+      <div class="bar"><i class="b-r"></i><i class="b-y"></i><i class="b-g"></i><span class="ttl">the bundled single file</span></div>
+      <div class="body"><pre><span class="t-prompt">&gt;</span> <span class="type">ls .claude/skills/setup/scripts/</span>
+<span class="t-lbl">harness-projection.mjs</span></pre></div>
+    </div>
+    </details>
+
+    <details class="fold sub" open>
+    <summary><span class="cix">00.2</span><h3>Wire the commands</h3></summary>
+    <ul class="note">
+      <li>with a <code>package.json</code>: add the <code>harness-setup:sync</code> and <code>harness-setup:check</code> scripts</li>
+      <li>run them with the repo's package manager: prefer <code>packageManager</code>, then one unambiguous lockfile; ask if signals conflict</li>
+      <li>point them at the bundled file:</li>
+    </ul>
+    <div class="win">
+      <div class="bar"><i class="b-r"></i><i class="b-y"></i><i class="b-g"></i><span class="ttl">package.json → "scripts"</span></div>
+      <div class="body"><pre><span class="dim">{</span>
+  <span class="blue">"scripts"</span><span class="dim">:</span> <span class="dim">{</span>
+    <span class="blue">"harness-setup:sync"</span><span class="dim">:</span>  <span class="t-ok">"node .claude/skills/setup/scripts/harness-projection.mjs sync"</span><span class="dim">,</span>
+    <span class="blue">"harness-setup:check"</span><span class="dim">:</span> <span class="t-ok">"node .claude/skills/setup/scripts/harness-projection.mjs check"</span>
+  <span class="dim">}</span>
+<span class="dim">}</span></pre></div>
+    </div>
+    <div class="anno"><span class="pin">use the repo's package manager</span>
+      <code>npm run harness-setup:sync</code> ·
+      <code>pnpm run harness-setup:sync</code> ·
+      <code>yarn harness-setup:sync</code> ·
+      <code>bun run harness-setup:sync</code>.
+      Use the matching <code>harness-setup:check</code> command afterward.
+      The npm commands shown later in this visual are one concrete example.
+    </div>
+    <div class="anno"><span class="pin">no package.json?</span>
+      Skip the scripts. Run Node on the file directly — same tool, same args:
+      <div class="win" style="margin:10px 0 0">
+        <div class="bar"><i class="b-r"></i><i class="b-y"></i><i class="b-g"></i><span class="ttl">no package.json — call node</span></div>
+        <div class="body"><pre><span class="t-prompt">&gt;</span> <span class="type">node .claude/skills/setup/scripts/harness-projection.mjs sync</span>
+<span class="t-prompt">&gt;</span> <span class="type">node .claude/skills/setup/scripts/harness-projection.mjs check</span></pre></div>
+      </div>
+    </div>
+    <div class="anno"><span class="pin">then</span>
+      <ul>
+        <li>commit the script (and <code>package.json</code> change, if any)</li>
+        <li>after the first <code>sync</code>, also commit <code>.harness-projection/decisions.json</code> with the generated files</li>
+        <li>day to day: use the detected package-manager commands, or the <code>node&nbsp;…</code> commands above</li>
+      </ul>
+    </div>
+    </details>
+    </details>
+  </section>
+
+  <!-- 01 -->
+  <section>
+    <details class="fold sec" open>
+    <summary><h2><span class="hash">#</span> 01 · two commands</h2></summary>
+    <div class="duo">
+      <div class="cc fix"><span class="role">writes · interactive</span><h3>sync</h3>
+        <div class="run">&gt; npm run harness-setup:sync</div>
+        <div class="run dim" style="margin-top:-4px">or node …/harness-projection.mjs sync</div>
+        <ul><li>asks when a translation isn't clean</li><li>regenerates the Copilot side</li><li>saves answers in <code>.harness-projection/decisions.json</code></li></ul></div>
+      <div class="cc gate"><span class="role">read-only · CI gate</span><h3>check</h3>
+        <div class="run">&gt; npm run harness-setup:check</div>
+        <div class="run dim" style="margin-top:-4px">or node …/harness-projection.mjs check</div>
+        <ul><li>never writes, never prompts</li><li>pass → exit 0 · drift → exit 1</li><li>fails the build if output is stale</li></ul></div>
+    </div>
+    <p class="note" style="margin-top:14px">No <code>package.json</code>? Use the <code>node …</code> form — see §00.2.</p>
+    </details>
+  </section>
+
+  <!-- 02 -->
+  <section>
+    <details class="fold sec" open>
+    <summary><h2><span class="hash">#</span> 02 · what a <span class="green">sync</span> run looks like</h2></summary>
+    <ul class="note">
+      <li>most runs finish in one pass</li>
+      <li>pauses only when a Claude feature needs your call</li>
+      <li>prints <span class="cyan">=== Choice needed ===</span> and waits</li>
+    </ul>
+    <div class="win">
+      <div class="bar"><i class="b-r"></i><i class="b-y"></i><i class="b-g"></i><span class="ttl">a run that pauses once, then finishes</span></div>
+      <div class="body"><pre><span class="t-prompt">&gt;</span> <span class="type">npm run harness-setup:sync</span>
+<span class="dim">harness-projection v1</span>
+<span class="t-hdr">=== Choice needed ===</span>
+<span class="t-src">From: .claude/agents/reviewer.md</span>
+<span class="t-dec">About: Narrowed tool grant: Read(docs/**)</span>
+<span class="t-lbl">Status: missing</span>
+<span class="dim">…answer it (see §03)…</span>
+<span class="t-prompt">&gt;</span> Choose 1=widen, 2=omit, or name (Enter keeps current): <span class="type">1</span>
+<span class="t-ok">Projected 6 Canonical Agents and 3 Scoped Instructions.</span></pre></div>
+    </div>
+    <div class="anno">
+      <span class="pin">read it</span>
+      <ul>
+        <li>walks <code>.claude/agents/</code> then <code>.claude/rules/</code></li>
+        <li>pauses at each unclear point</li>
+        <li>answers land in <code>.harness-projection/decisions.json</code> → next run is usually silent</li>
+        <li>re-asks when you change a source</li>
+      </ul>
+    </div>
+
+    <details class="fold sub" open>
+    <summary><span class="cix">02.1</span><h3>Where decisions are stored</h3></summary>
+    <ul class="note">
+      <li>one versioned ledger: <code>.harness-projection/decisions.json</code></li>
+      <li>wizard writes it — do not hand-edit</li>
+      <li>commit it with the generated Copilot files</li>
+      <li>example of what lands there:</li>
+    </ul>
+    <div class="win">
+      <div class="bar"><i class="b-r"></i><i class="b-y"></i><i class="b-g"></i><span class="ttl">.harness-projection/decisions.json — after you pick widen for Read(docs/**)</span></div>
+      <div class="body"><pre><span class="dim">{</span>
+  <span class="blue">"schemaVersion"</span><span class="dim">:</span> <span class="t-ok">1</span><span class="dim">,</span>
+  <span class="blue">"agents"</span><span class="dim">:</span> <span class="dim">{</span>
+    <span class="blue">".claude/agents/reviewer.md"</span><span class="dim">:</span> <span class="dim">{</span>
+      <span class="blue">"scopedToolResolutions"</span><span class="dim">:</span> <span class="dim">{</span>
+        <span class="blue">"Read(docs/**)"</span><span class="dim">:</span> <span class="dim">{</span> <span class="blue">"action"</span><span class="dim">:</span> <span class="t-ok">"widen"</span><span class="dim">, … }</span>
+      <span class="dim">}</span>
+    <span class="dim">}</span>
+  <span class="dim">}</span>
+<span class="dim">}</span></pre></div>
+    </div>
+    <div class="anno"><span class="pin">also holds</span>
+      <ul>
+        <li>tool expansions · unsupported-field dispositions · harness-specific tool names</li>
+        <li>bypass acks · target-tool keep/discard choices</li>
+        <li>each entry fingerprinted so a source edit reopens the question</li>
+      </ul>
+    </div>
+    </details>
+    </details>
+  </section>
+
+  <!-- 03 : the heart -->
+  <section>
+    <details class="fold sec" open>
+    <summary><h2><span class="hash">#</span> 03 · every question, and how you answer it</h2></summary>
+    <ul class="note">
+      <li>six blocks the wizard can print — shown as they appear</li>
+      <li>colors match the real terminal:</li>
+    </ul>
+
+    <div class="legend">
+      <div class="lh">how to read a transcript</div>
+      <div class="items">
+        <div class="it"><span class="sw cyan">===</span> decision header &amp; every <span class="cyan">&gt;</span> prompt</div>
+        <div class="it"><span class="sw" style="color:var(--input)">▊</span> <span class="type">highlighted</span> = what you type</div>
+        <div class="it"><span class="sw green">[1]</span> <span class="green">green</span> = saved / current pick</div>
+        <div class="it"><span class="sw yellow">[2]</span> <span class="yellow">yellow</span> = other options</div>
+        <div class="it"><span class="sw red">!</span> <span class="red">red</span> = error · re-asks</div>
+        <div class="it"><span class="sw dim">dim</span> source path · <span style="color:#fff;font-weight:700">white</span> decision title</div>
+      </div>
+    </div>
+
+    <!-- 3.1 tool expansion -->
+    <div class="case">
+    <details class="fold sub" open>
+    <summary><span class="cix">03.1</span><h3>Tool expansion — one Claude tool, several VS&nbsp;Code tools</h3><span class="pill every">asked every run</span></summary>
+    <ul class="note">
+      <li>some tools split on project</li>
+      <li><span class="purple">Read</span> → up to 3 VS&nbsp;Code tools</li>
+      <li>you pick which to grant</li>
+    </ul>
+    <div class="win">
+      <div class="bar"><i class="b-r"></i><i class="b-y"></i><i class="b-g"></i><span class="ttl">first time — nothing saved yet</span></div>
+      <div class="body"><pre><span class="t-hdr">=== Choice needed ===</span>
+<span class="t-src">From: .claude/agents/reviewer.md</span>
+<span class="t-dec">About: Which Copilot tools for Claude's Read?</span>
+<span class="t-lbl">Status: missing</span>
+<span class="t-lbl">Claude's Read maps to several Copilot tools (expanding).</span>
+<span class="t-lbl">Pick which ones to grant.</span>
+
+<span class="t-lbl" style="font-weight:700">Choices</span>
+<span class="t-opt">  [1] read/readFile</span>
+<span class="t-opt">  [2] read/getNotebookSummary</span>
+<span class="t-opt">  [3] read/readNotebookCellOutput</span>
+<span class="t-prompt">&gt;</span> Pick by number or name, comma-separated (Enter keeps current; "none" for none): <span class="type">1</span></pre></div>
+    </div>
+    <div class="anno">
+      <span class="pin">you type</span> <code>1</code> — plain file reader only
+      <ul>
+        <li><span class="lead">also valid</span> <code>1,2</code> · <code>read/readFile</code> · <code>none</code></li>
+        <li><span class="lead">wrong</span> <span class="red">! Pick only from the list above.</span></li>
+      </ul>
+    </div>
+    <div class="runsep"><b>▼ next sync</b> the same question returns — your answer comes back pre-selected</div>
+    <div class="win recur">
+      <div class="bar"><i class="b-r"></i><i class="b-y"></i><i class="b-g"></i><span class="ttl"><span class="rtag">every later run</span>press Enter to keep the green (current) pick</span></div>
+      <div class="body"><pre><span class="t-lbl" style="font-weight:700">Choices</span>
+<span class="t-cur">  [1] read/readFile  (current)</span>
+<span class="t-opt">  [2] read/getNotebookSummary</span>
+<span class="t-opt">  [3] read/readNotebookCellOutput</span>
+<span class="t-prompt">&gt;</span> Pick by number or name, … (Enter keeps current; "none" for none): <span class="kbd">Enter ⏎</span></pre></div>
+    </div>
+    <div class="anno"><span class="pin">why it recurs</span>
+      <ul>
+        <li>reopens on <b>every</b> sync — splits never change silently</li>
+        <li>saved pick is <span class="green">green</span> + current</li>
+        <li>press <span class="kbd">Enter</span> to keep it</li>
+      </ul>
+    </div>
+    </details>
+    </div><!-- /case 3.1 -->
+
+    <!-- 3.2 scoped tool -->
+    <div class="case">
+    <details class="fold sub">
+    <summary><span class="cix">03.2</span><h3>Scoped tool — a path-scoped grant Copilot can't keep</h3><span class="pill every">asked every run</span></summary>
+    <ul class="note">
+      <li>e.g. <span class="purple">Read(docs/**)</span> is path-scoped</li>
+      <li>Copilot has no path-scoping</li>
+      <li>you choose how to degrade it</li>
+    </ul>
+    <div class="win">
+      <div class="bar"><i class="b-r"></i><i class="b-y"></i><i class="b-g"></i><span class="ttl">reviewer grants Read(docs/**)</span></div>
+      <div class="body"><pre><span class="t-hdr">=== Choice needed ===</span>
+<span class="t-src">From: .claude/agents/reviewer.md</span>
+<span class="t-dec">About: Narrowed tool grant: Read(docs/**)</span>
+<span class="t-lbl">Status: missing</span>
+<span class="t-lbl">Claude limits Read to: docs/**</span>
+<span class="t-lbl">Copilot cannot keep that limit.</span>
+<span class="t-lbl">widen scope — drop the limit and map the bare tool (may grant more access).</span>
+<span class="t-lbl">omit — grant nothing for this entry.</span>
+
+<span class="t-lbl" style="font-weight:700">Choices</span>
+<span class="t-opt">  [1] widen</span>
+<span class="t-opt">  [2] omit</span>
+<span class="t-prompt">&gt;</span> Choose 1=widen, 2=omit, or name (Enter keeps current): <span class="type">1</span></pre></div>
+    </div>
+    <div class="anno">
+      <span class="pin">you type</span> <code>1</code> / <code>widen</code> — bare <span class="purple">Read</span>, drop <code>docs/**</code>
+      <ul>
+        <li><b>grant widens</b> — agent can read anywhere</li>
+        <li><span class="lead">or</span> <code>2</code> / <code>omit</code> — grant nothing for this entry</li>
+        <li><span class="lead">wrong</span> <span class="red">! Type 1/widen or 2/omit.</span></li>
+      </ul>
+    </div>
+    </details>
+    </div><!-- /case 3.2 -->
+
+    <!-- 3.3 unsupported field -->
+    <div class="case">
+    <details class="fold sub">
+    <summary><span class="cix">03.3</span><h3>Unsupported field — frontmatter Copilot doesn't understand</h3><span class="pill change">asked when the source changes</span></summary>
+    <ul class="note">
+      <li>maps directly: <span class="purple">name</span>, <span class="purple">description</span>, <span class="purple">tools</span></li>
+      <li>any other frontmatter key → decision</li>
+    </ul>
+    <div class="win">
+      <div class="bar"><i class="b-r"></i><i class="b-y"></i><i class="b-g"></i><span class="ttl">reviewer.md carries a non-standard `color: green`</span></div>
+      <div class="body"><pre><span class="t-hdr">=== Choice needed ===</span>
+<span class="t-src">From: .claude/agents/reviewer.md</span>
+<span class="t-dec">About: Claude field Copilot doesn't support: color</span>
+<span class="t-lbl">Status: missing</span>
+<span class="t-lbl">Value: "green"</span>
+
+<span class="t-lbl" style="font-weight:700">Choices</span>
+<span class="t-opt">  [1] omit</span>
+<span class="t-opt">  [2] target-native</span>
+<span class="t-prompt">&gt;</span> Drop it or replace with Copilot fields? ("omit" or "target-native"): <span class="type">target-native</span>
+<span class="t-prompt">&gt;</span> Copilot fields as JSON: <span class="type">{"model": "gpt-4o"}</span></pre></div>
+    </div>
+    <div class="anno">
+      <span class="pin">you type</span> <code>target-native</code> → then a JSON object of VS&nbsp;Code fields
+      <ul>
+        <li>example: <code>{"model": "gpt-4o"}</code> replaces the dropped field</li>
+        <li><span class="lead">simpler</span> <code>omit</code> — drop it, no follow-up</li>
+        <li><span class="lead">wrong disposition</span> <span class="red">! Type "omit" or "target-native".</span></li>
+        <li><span class="lead">bad JSON</span> aborts with <span class="red">invalid target-native JSON (…)</span></li>
+      </ul>
+    </div>
+    </details>
+    </div><!-- /case 3.3 -->
+
+    <!-- 3.4 harness-specific tool name -->
+    <div class="case">
+    <details class="fold sub">
+    <summary><span class="cix">03.4</span><h3>Harness-specific tool name — rename it or keep it</h3><span class="pill change">asked when the source changes</span></summary>
+    <ul class="note">
+      <li>body names a Claude-only thing (tool, <span class="purple">mcp__…</span>, <span class="purple">#context</span>)</li>
+      <li>projection stops — Copilot won't understand it</li>
+    </ul>
+    <div class="win">
+      <div class="bar"><i class="b-r"></i><i class="b-y"></i><i class="b-g"></i><span class="ttl">reviewer body mentions WebSearch</span></div>
+      <div class="body"><pre><span class="t-hdr">=== Choice needed ===</span>
+<span class="t-src">From: .claude/agents/reviewer.md</span>
+<span class="t-dec">About: Harness-specific tool name</span>
+<span class="t-lbl">Status: missing</span>
+<span class="t-lbl">Mentions: Claude tool WebSearch</span>
+<span class="t-lbl">Text: WebSearch</span>
+<span class="t-lbl">Rename it in the source, or keep it as written.</span>
+<span class="t-prompt">&gt;</span> New name (or type "keep"): <span class="type">web search</span></pre></div>
+    </div>
+    <div class="anno">
+      <span class="pin">you type</span> a portable name — rewrites the canonical prose
+      <ul>
+        <li><span class="lead">or</span> <code>keep</code> — ship it on purpose (saved under <code>keptNames</code>)</li>
+        <li><span class="lead">empty / same text</span> <span class="red">! Type a new name, or "keep".</span></li>
+      </ul>
+    </div>
+    </details>
+    </div><!-- /case 3.4 -->
+
+    <!-- 3.5 bypass ack -->
+    <div class="case">
+    <details class="fold sub">
+    <summary><span class="cix">03.5</span><h3>Bypass acknowledgement — a boundary you must confirm</h3><span class="pill change">asked when the source changes</span></summary>
+    <ul class="note">
+      <li>triggers when agent can spawn sub-agents</li>
+      <li>or grants <b>all</b> tools — <code>tools</code> key omitted (not <code>tools: []</code>)</li>
+      <li><code>tools: []</code> means no tools — no ack</li>
+      <li>wizard requires an explicit ack</li>
+    </ul>
+    <div class="win">
+      <div class="bar"><i class="b-r"></i><i class="b-y"></i><i class="b-g"></i><span class="ttl">reviewer omits tools → all-tools grant</span></div>
+      <div class="body"><pre><span class="t-hdr">=== Choice needed ===</span>
+<span class="t-src">From: .claude/agents/reviewer.md</span>
+<span class="t-dec">About: Extra capability</span>
+<span class="t-lbl">Status: missing</span>
+<span class="t-lbl">Capability: agent delegation</span>
+<span class="t-lbl">Tools: agent, agent/runSubagent</span>
+<span class="t-prompt">&gt;</span> Type "ack" to allow this: <span class="type">ack</span></pre></div>
+    </div>
+    <div class="anno">
+      <span class="pin">you type</span> <code>ack</code> — confirm sub-agent delegation in Copilot too
+      <ul>
+        <li><span class="lead">anything else</span> <span class="red">! Type "ack" to continue.</span></li>
+      </ul>
+    </div>
+    </details>
+    </div><!-- /case 3.5 -->
+
+    <!-- 3.6 target tool resolution -->
+    <div class="case">
+    <details class="fold sub">
+    <summary><span class="cix">03.6</span><h3>Target-tool resolution — a hand-added tool the generator found</h3><span class="pill change">asked when detected</span></summary>
+    <ul class="note">
+      <li>generated file has a VS&nbsp;Code-only tool added by hand</li>
+      <li>can't be derived from any Claude source</li>
+      <li>asks keep or discard</li>
+    </ul>
+    <div class="win">
+      <div class="bar"><i class="b-r"></i><i class="b-y"></i><i class="b-g"></i><span class="ttl">browser/navigate found only in the generated file</span></div>
+      <div class="body"><pre><span class="t-hdr">=== Choice needed ===</span>
+<span class="t-src">From: .claude/agents/reviewer.md</span>
+<span class="t-dec">About: Extra tool in generated file: browser/navigate</span>
+<span class="t-lbl">This tool is in the generated Copilot agent file, but not in the Claude source.</span>
+<span class="t-lbl">Someone probably added it by hand.</span>
+<span class="t-lbl">Say "keep" to remember it for future syncs, or "discard" to drop it.</span>
+<span class="t-prompt">&gt;</span> Keep or discard this tool (keep / discard): <span class="type">discard</span></pre></div>
+    </div>
+    <div class="anno">
+      <span class="pin">you type</span> <code>discard</code> — drop it (usual choice)
+      <ul>
+        <li>prefer editing the canonical <code>tools</code> list instead</li>
+        <li><code>keep</code> — remember it for next sync</li>
+        <li><span class="lead">anything else</span> <span class="red">! Type "keep" or "discard".</span></li>
+      </ul>
+    </div>
+    </details>
+    </div><!-- /case 3.6 -->
+    </details>
+  </section>
+
+  <!-- 04 warnings -->
+  <section>
+    <details class="fold sec" open>
+    <summary><h2><span class="hash">#</span> 04 · warnings &amp; stops</h2></summary>
+    <ul class="note">
+      <li><span class="yellow">fail-closed</span> — almost no soft warnings</li>
+      <li>ambiguity → question (§03)</li>
+      <li>real problems → hard stop</li>
+      <li>two you may hit:</li>
+    </ul>
+    <div class="win">
+      <div class="bar"><i class="b-r"></i><i class="b-y"></i><i class="b-g"></i><span class="ttl">info notice after a sync — a hand edit was undone</span></div>
+      <div class="body"><pre><span class="t-info">i .github/agents/reviewer.agent.md: dropped hand-added tool read/readFile — it comes</span>
+<span class="t-info">  from Claude tool Read. Change the tools list in</span>
+<span class="t-info">  .claude/agents/reviewer.md instead.</span></pre></div>
+    </div>
+    <div class="anno"><span class="pin">what to do</span>
+      <ul>
+        <li>you edited a generated file — tool reclaimed it as drift</li>
+        <li>change tools in canonical <code>.claude/agents/…</code> <b>tools</b> list</li>
+        <li>never edit the generated file</li>
+      </ul>
+    </div>
+    <div class="win">
+      <div class="bar"><i class="b-r"></i><i class="b-y"></i><i class="b-g"></i><span class="ttl">a hard stop — the tool won't clobber a file it doesn't own</span></div>
+      <div class="body"><pre><span class="t-err">harness-projection: refusing to overwrite unmanaged file .github/agents/reviewer.agent.md</span></pre></div>
+    </div>
+    <div class="anno"><span class="pin">what to do</span>
+      <ul>
+        <li>file sits where a generated one should, but lacks ownership marker (§07)</li>
+        <li>move or delete it, then re-run <code>sync</code></li>
+        <li>tool never overwrites files it didn't create</li>
+      </ul>
+    </div>
+    </details>
+  </section>
+
+  <!-- 05 limitations -->
+  <section>
+    <details class="fold sec" open>
+    <summary><h2><span class="hash">#</span> 05 · limitations — claude vs copilot</h2></summary>
+    <ul class="note">
+      <li>Copilot lacks some Claude capabilities</li>
+      <li>maps what it can · narrows what it must · drops the rest</li>
+      <li>that's why §03 exists</li>
+    </ul>
+    <div class="maprow k-exact"><div class="k">exact →</div><div class="v">one-to-one tool maps · never re-asked unless source changes</div></div>
+    <div class="maprow k-expand"><div class="k">expanding →</div><div class="v"><span class="purple">Read</span> / <span class="purple">Write</span> each split into ≤3 VS&nbsp;Code tools — you choose (§03.1)</div></div>
+    <div class="maprow k-lossy"><div class="k">lossy →</div><div class="v"><span class="purple">PowerShell</span> shares terminal with Bash · <span class="purple">WebFetch</span> → web/fetch · <span class="purple">LSP</span> → usages + problems</div></div>
+    <div class="maprow k-drop"><div class="k">dropped ✕</div><div class="v">~30 tools have no equivalent — not granted:
+      <span class="chips"><span class="chip">Skill</span><span class="chip">TodoWrite</span><span class="chip">WebSearch</span><span class="chip">Task*</span><span class="chip">Workflow</span><span class="chip">Artifact</span><span class="chip">Cron*</span><span class="chip">…</span></span></div></div>
+    <div class="anno" style="margin-top:14px">
+      <span class="pin">also</span>
+      <ul>
+        <li><b>scoped grants can't be preserved</b> — <code>Bash(npm run *)</code> can only widen or drop (§03.2)</li>
+        <li><b>skills aren't projected</b> — stay in <code>.claude/skills/</code>; Copilot just points at the same folder</li>
+        <li><b>MCP tools renamed, not resolved</b> — <span class="purple">mcp__server__tool</span> → <code>server/tool</code></li>
+        <li>keep the same server key in <code>.mcp.json</code> and <code>.vscode/mcp.json</code></li>
+      </ul>
+    </div>
+    </details>
+  </section>
+
+  <!-- 06 check -->
+  <section>
+    <details class="fold sec" open>
+    <summary><h2><span class="hash">#</span> 06 · what <span class="blue">check</span> reports</h2></summary>
+    <ul class="note">
+      <li>same analysis as sync</li>
+      <li>compares against disk — writes nothing, never prompts</li>
+      <li>your CI gate</li>
+    </ul>
+    <div class="win">
+      <div class="bar"><i class="b-r"></i><i class="b-y"></i><i class="b-g"></i><span class="ttl">pass</span></div>
+      <div class="body"><pre><span class="t-prompt">&gt;</span> <span class="type">npm run harness-setup:check</span>
+<span class="t-ok">Checked 6 Agent Projections and 3 Scoped Instructions; no drift.</span>
+<span class="dim">exit 0</span></pre></div>
+    </div>
+    <div class="win">
+      <div class="bar"><i class="b-r"></i><i class="b-y"></i><i class="b-g"></i><span class="ttl">fail — written to stderr, exit 1</span></div>
+      <div class="body"><pre><span class="t-prompt">&gt;</span> <span class="type">npm run harness-setup:check</span>
+<span class="t-err">harness-projection: projection check failed:</span>
+<span class="t-err">- drift in .github/agents/reviewer.agent.md</span>
+<span class="t-err">- missing .github/instructions/style.instructions.md</span>
+<span class="t-lbl">Run `npm run harness-setup:sync` to regenerate.</span></pre></div>
+    </div>
+    <div class="anno"><span class="pin">it fails on</span>
+      <ul>
+        <li>hand-edited (<span class="red">drift</span>), <span class="red">missing</span>, or orphaned generated file</li>
+        <li>unresolved or stale decision</li>
+        <li>unconfigured VS&nbsp;Code settings</li>
+        <li>fix: always run <code>sync</code></li>
+      </ul>
+    </div>
+    </details>
+  </section>
+
+  <!-- 07 safety -->
+  <section>
+    <details class="fold sec" open>
+    <summary><h2><span class="hash">#</span> 07 · safety guarantee</h2></summary>
+    <ul class="note">
+      <li>only overwrites / deletes files with its ownership marker</li>
+      <li>everything else left untouched</li>
+      <li>§04 hard stop enforces this</li>
+    </ul>
+    <div class="win">
+      <div class="bar"><i class="b-r"></i><i class="b-y"></i><i class="b-g"></i><span class="ttl">every generated file starts with</span></div>
+      <div class="body"><pre><span class="t-ok"># Generated by harness-projection; DO NOT EDIT.</span>
+<span class="dim"># Canonical source: .claude/agents/&lt;name&gt;.md</span></pre></div>
+    </div>
+    </details>
+  </section>
+
+</main>
+
+<footer class="wrap"><span>// end of guide</span></footer>
+</body>
+</html>
