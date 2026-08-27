@@ -9080,7 +9080,7 @@ function mergeTargetFields(target, additions, context) {
     target[field] = value;
   }
 }
-async function resolveNativeFields(sourceMetadata, sourcePath, { decisions = {}, resolveDisposition } = {}) {
+async function resolveNativeFields(sourceMetadata, sourcePath, { decisions = {}, resolveDisposition, resolveModelChoice } = {}) {
   if (!isPlainObject(decisions)) {
     throw new Error(`${sourcePath}: native-field decisions must be an object`);
   }
@@ -9089,11 +9089,12 @@ async function resolveNativeFields(sourceMetadata, sourcePath, { decisions = {},
   const unsupportedFields = Object.keys(sourceMetadata).filter((field) => !COMMON_CLAUDE_FIELDS.has(field)).sort();
   for (const sourceField of unsupportedFields) {
     const fingerprint = semanticFingerprint(sourceField, sourceMetadata[sourceField]);
+    const resolveField = sourceField === "model" ? resolveModelChoice : resolveDisposition;
     const { decision, resolved } = await resolveAgainstSavedDecision({
       saved: decisions[sourceField],
       classifySaved: (saved) => validateResolution(saved, sourcePath, sourceField, fingerprint),
-      resolve: resolveDisposition ? async (status) => {
-        const disposition = await resolveDisposition({
+      resolve: resolveField ? async (status) => {
+        const disposition = await resolveField({
           sourceField,
           sourcePath,
           sourceValue: sourceMetadata[sourceField],
@@ -9122,6 +9123,92 @@ async function resolveNativeFields(sourceMetadata, sourcePath, { decisions = {},
   return { resolutions, targetFields };
 }
 
+// src/model-catalog.mjs
+var import_yaml = __toESM(require_dist(), 1);
+import { readFile as readFile2 } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+var DEFAULT_MODEL_CATALOG_URL = "https://raw.githubusercontent.com/github/docs/main/data/tables/copilot/model-supported-clients.yml";
+var FETCH_TIMEOUT_MS = 5e3;
+function catalogUrl() {
+  return process.env.HARNESS_PROJECTION_MODEL_CATALOG_URL || DEFAULT_MODEL_CATALOG_URL;
+}
+async function readCatalogText(url) {
+  if (url.startsWith("file://")) {
+    return readFile2(fileURLToPath(url), "utf8");
+  }
+  const response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  if (!response.ok) {
+    throw new Error(`${url} responded ${response.status}`);
+  }
+  return response.text();
+}
+function parseCatalog(text) {
+  const entries = (0, import_yaml.parse)(text);
+  if (!Array.isArray(entries)) {
+    throw new Error("model catalog: expected a YAML list");
+  }
+  return entries.map((entry, index) => {
+    if (!entry || typeof entry !== "object") {
+      throw new Error(`model catalog: entry[${index}] must be a mapping`);
+    }
+    if (typeof entry.name !== "string" || entry.name.trim() === "") {
+      throw new Error(`model catalog: entry[${index}].name must be a non-empty string`);
+    }
+    return {
+      name: entry.name,
+      vscode: entry.vscode === true
+    };
+  });
+}
+async function fetchModelCatalog() {
+  return parseCatalog(await readCatalogText(catalogUrl()));
+}
+var CLAUDE_FAMILIES = Object.freeze({
+  sonnet: "Claude Sonnet",
+  opus: "Claude Opus",
+  haiku: "Claude Haiku",
+  fable: "Claude Fable"
+});
+function claudeFamilyFor(value) {
+  if (Object.hasOwn(CLAUDE_FAMILIES, value)) {
+    return CLAUDE_FAMILIES[value];
+  }
+  const match = /^claude-([a-z]+)-/.exec(value);
+  return match && Object.hasOwn(CLAUDE_FAMILIES, match[1]) ? CLAUDE_FAMILIES[match[1]] : void 0;
+}
+function isPlainRelease(name, family) {
+  return new RegExp(`^${family} [0-9][0-9.]*$`).test(name);
+}
+function versionOf(name, family) {
+  return name.slice(family.length).trim().split(".").map(Number);
+}
+function compareVersions(a, b) {
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const diff = (a[index] ?? 0) - (b[index] ?? 0);
+    if (diff !== 0) {
+      return diff;
+    }
+  }
+  return 0;
+}
+function suggestModelChoice(value, availableNames) {
+  if (value === "inherit") {
+    return { omit: true };
+  }
+  const family = claudeFamilyFor(value);
+  if (family === void 0) {
+    return void 0;
+  }
+  const releases = availableNames.filter((name) => isPlainRelease(name, family));
+  if (releases.length === 0) {
+    return void 0;
+  }
+  const newest = releases.reduce(
+    (best, name) => compareVersions(versionOf(name, family), versionOf(best, family)) > 0 ? name : best
+  );
+  return { name: newest };
+}
+
 // src/interactive-resolvers.mjs
 async function askUntil(prompts, ui, question, parseAnswer, errorMessage) {
   while (true) {
@@ -9135,6 +9222,79 @@ async function askUntil(prompts, ui, question, parseAnswer, errorMessage) {
 function normalizedChoice(answer, choices) {
   const value = answer.trim().toLowerCase();
   return choices.includes(value) ? { accepted: true, value } : { accepted: false };
+}
+async function promptGenericDisposition(prompts, ui, { sourceField, sourcePath, sourceValue, status }) {
+  ui.decision({
+    sourcePath,
+    title: `Claude field Copilot doesn't support: ${sourceField}`,
+    details: [`Status: ${status}`, `Value: ${JSON.stringify(sourceValue)}`],
+    choices: [
+      "omit",
+      "target-native \u2014 only if you're sure Copilot supports this and the script just doesn't know about it"
+    ]
+  });
+  const disposition = await askUntil(
+    prompts,
+    ui,
+    "Choose 1=omit or 2=target-native: ",
+    (answer) => {
+      const value = answer.trim();
+      if (value === "1") return { accepted: true, value: "omit" };
+      if (value === "2") return { accepted: true, value: "target-native" };
+      return normalizedChoice(answer, ["omit", "target-native"]);
+    },
+    "Type 1/omit or 2/target-native."
+  );
+  if (disposition === "omit") {
+    return { disposition };
+  }
+  const targetFields = await prompts.question(ui.prompt("Copilot fields as JSON: "));
+  return { disposition, targetFields: parseTargetNativeJson(targetFields) };
+}
+var OMIT_CHOICE_LABEL = "omit \u2014 let Copilot use its default";
+async function promptModelChoice(prompts, ui, { sourceField, sourcePath, sourceValue, status }) {
+  let catalog;
+  try {
+    catalog = await fetchModelCatalog();
+  } catch (error) {
+    ui.error(
+      `Could not reach the Copilot model catalog (${error.message}) \u2014 falling back to manual entry.`
+    );
+    return promptGenericDisposition(prompts, ui, { sourceField, sourcePath, sourceValue, status });
+  }
+  const availableNames = catalog.filter((entry) => entry.vscode).map((entry) => entry.name).sort((a, b) => a.localeCompare(b));
+  const suggestion = suggestModelChoice(sourceValue, availableNames);
+  const choices = [...availableNames, OMIT_CHOICE_LABEL];
+  const suggestedChoices = suggestion?.omit ? [OMIT_CHOICE_LABEL] : suggestion?.name !== void 0 ? [suggestion.name] : [];
+  ui.decision({
+    sourcePath,
+    title: `Which Copilot model for Claude's ${sourceField}: ${JSON.stringify(sourceValue)}?`,
+    details: [`Status: ${status}`, "Fetched live from github/docs (model-supported-clients.yml)"],
+    choices,
+    suggestedChoices
+  });
+  const picked = await askUntil(
+    prompts,
+    ui,
+    suggestedChoices.length > 0 ? "Pick a number or name (Enter accepts the suggested one): " : "Pick a number or name: ",
+    (answer) => {
+      const selection = answer.trim();
+      if (selection === "") {
+        return suggestedChoices.length > 0 ? { accepted: true, value: suggestedChoices[0] } : { accepted: false };
+      }
+      if (/^\d+$/.test(selection)) {
+        const choice = choices[Number(selection) - 1];
+        return choice === void 0 ? { accepted: false } : { accepted: true, value: choice };
+      }
+      if (selection.toLowerCase() === "omit") {
+        return { accepted: true, value: OMIT_CHOICE_LABEL };
+      }
+      const matched = choices.find((choice) => choice.toLowerCase() === selection.toLowerCase());
+      return matched === void 0 ? { accepted: false } : { accepted: true, value: matched };
+    },
+    'Pick a number from the list, a model name, or "omit".'
+  );
+  return picked === OMIT_CHOICE_LABEL ? { disposition: "omit" } : { disposition: "target-native", targetFields: { model: `${picked} (copilot)` } };
 }
 function createInteractiveDecisionResolvers(prompts, ui) {
   return {
@@ -9164,31 +9324,8 @@ function createInteractiveDecisionResolvers(prompts, ui) {
         'Type "ack" to continue.'
       );
     },
-    resolveDisposition: async ({ sourceField, sourcePath, sourceValue, status }) => {
-      ui.decision({
-        sourcePath,
-        title: `Claude field Copilot doesn't support: ${sourceField}`,
-        details: [
-          `Status: ${status}`,
-          `Value: ${JSON.stringify(sourceValue)}`
-        ],
-        choices: ["omit", "target-native"]
-      });
-      const disposition = await askUntil(
-        prompts,
-        ui,
-        'Drop it or replace with Copilot fields? ("omit" or "target-native"): ',
-        (answer) => normalizedChoice(answer, ["omit", "target-native"]),
-        'Type "omit" or "target-native".'
-      );
-      if (disposition === "omit") {
-        return { disposition };
-      }
-      const targetFields = await prompts.question(
-        ui.prompt("Copilot fields as JSON: ")
-      );
-      return { disposition, targetFields: parseTargetNativeJson(targetFields) };
-    },
+    resolveDisposition: (input) => promptGenericDisposition(prompts, ui, input),
+    resolveModelChoice: (input) => promptModelChoice(prompts, ui, input),
     resolveHarnessToolName: async ({
       referenceLabel,
       referenceLiteral,
@@ -9308,24 +9445,29 @@ function createInteractiveDecisionResolvers(prompts, ui) {
         title: `Extra tool in generated file: ${targetTool}`,
         details: [
           "This tool is in the generated Copilot agent file, but not in the Claude source.",
-          "Someone probably added it by hand.",
-          'Say "keep" to remember it for future syncs, or "discard" to drop it.'
-        ]
+          "Someone probably added it by hand."
+        ],
+        choices: ["keep", "discard"]
       });
       return askUntil(
         prompts,
         ui,
-        "Keep or discard this tool (keep / discard): ",
-        (answer) => normalizedChoice(answer, ["keep", "discard"]),
-        'Type "keep" or "discard".'
+        "Choose 1=keep or 2=discard: ",
+        (answer) => {
+          const value = answer.trim();
+          if (value === "1") return { accepted: true, value: "keep" };
+          if (value === "2") return { accepted: true, value: "discard" };
+          return normalizedChoice(answer, ["keep", "discard"]);
+        },
+        "Type 1/keep or 2/discard."
       );
     }
   };
 }
 
 // src/projection.mjs
-import { readFile as readFile3 } from "node:fs/promises";
-var import_yaml3 = __toESM(require_dist(), 1);
+import { readFile as readFile4 } from "node:fs/promises";
+var import_yaml4 = __toESM(require_dist(), 1);
 
 // src/tool-mappings.mjs
 var UNSUPPORTED_MAPPING = Object.freeze({
@@ -9714,14 +9856,14 @@ async function translateTools(value, sourcePath, {
 }
 
 // src/frontmatter.mjs
-var import_yaml = __toESM(require_dist(), 1);
+var import_yaml2 = __toESM(require_dist(), 1);
 var FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 function readFrontmatter(contents) {
   const match = FRONTMATTER_PATTERN.exec(contents);
   if (!match) {
     return { kind: "absent" };
   }
-  const document = (0, import_yaml.parseDocument)(match[1], { uniqueKeys: true });
+  const document = (0, import_yaml2.parseDocument)(match[1], { uniqueKeys: true });
   if (document.errors.length > 0) {
     return { kind: "invalid", error: document.errors[0].message };
   }
@@ -9733,8 +9875,8 @@ function readFrontmatter(contents) {
 }
 
 // src/scoped-instructions.mjs
-var import_yaml2 = __toESM(require_dist(), 1);
-import { readFile as readFile2 } from "node:fs/promises";
+var import_yaml3 = __toESM(require_dist(), 1);
+import { readFile as readFile3 } from "node:fs/promises";
 
 // src/projection-lifecycle.mjs
 import { mkdir, unlink } from "node:fs/promises";
@@ -9877,7 +10019,7 @@ function generatedRelativePath(sourceRelativePath) {
   return sourceRelativePath.replace(/(?:\.instructions)?\.md$/i, ".instructions.md");
 }
 function renderProjection(instruction, canonicalSource) {
-  const metadata = (0, import_yaml2.stringify)(
+  const metadata = (0, import_yaml3.stringify)(
     { applyTo: instruction.paths.join(",") },
     { lineWidth: 0, defaultKeyType: "PLAIN", defaultStringType: "QUOTE_DOUBLE" }
   ).trimEnd();
@@ -9899,7 +10041,7 @@ async function buildScopedInstructionPlan(root, { verifyPortability: verifyPorta
     buildContents: async ({ canonicalSource, sourceFile }) => {
       const instruction = parseCanonicalInstruction(
         canonicalSource,
-        await readFile2(sourceFile, "utf8")
+        await readFile3(sourceFile, "utf8")
       );
       if (verifyPortability2 !== void 0) {
         if (typeof verifyPortability2 !== "function") {
@@ -10498,9 +10640,9 @@ function generatedRelativePath2(sourceRelativePath) {
   return sourceRelativePath.replace(/(?:\.agent)?\.md$/i, ".agent.md");
 }
 function renderProjection2(agent, canonicalSource) {
-  const document = new import_yaml3.Document(agent.metadata);
+  const document = new import_yaml4.Document(agent.metadata);
   const tools = document.get("tools", true);
-  if ((0, import_yaml3.isSeq)(tools)) {
+  if ((0, import_yaml4.isSeq)(tools)) {
     tools.flow = true;
   }
   const metadata = document.toString({ lineWidth: 0, flowCollectionPadding: false }).trimEnd();
@@ -10560,7 +10702,7 @@ function makeDecisionRecorder(state, canonicalSource) {
   };
 }
 async function verifyScopedPortability(state, input, options) {
-  const sourceContents = await readFile3(input.sourceFile, "utf8");
+  const sourceContents = await readFile4(input.sourceFile, "utf8");
   const portability = await verifyPortability(input, {
     resolveHarnessToolName: options.resolveHarnessToolName,
     keptNames: getDecisionBucket(
@@ -10586,6 +10728,7 @@ async function buildProjectionState(root, {
   resolveBypassAcknowledgement,
   resolveDisposition,
   resolveHarnessToolName,
+  resolveModelChoice,
   resolveScopedTool,
   resolveTargetToolResolution,
   resolveToolExpansion
@@ -10605,7 +10748,7 @@ async function buildProjectionState(root, {
       targetFile,
       targetRelativePath
     }) => {
-      const contents = await readFile3(sourceFile, "utf8");
+      const contents = await readFile4(sourceFile, "utf8");
       const agent = parseCanonicalAgent(canonicalSource, contents);
       const previousSource = agentIdentities.get(agent.metadata.name);
       if (previousSource !== void 0) {
@@ -10624,7 +10767,8 @@ async function buildProjectionState(root, {
             canonicalSource,
             DECISION_BUCKETS.nativeFields
           ),
-          resolveDisposition
+          resolveDisposition,
+          resolveModelChoice
         }
       );
       Object.assign(agent.metadata, nativeFields.targetFields);
@@ -10810,7 +10954,14 @@ function createTerminalUi(stream = process.stdout, environment = process.env) {
   const colorEnabled = environment.NO_COLOR === void 0 && (stream.isTTY || forceColor);
   const paint = (text, ...codes) => colorEnabled ? `\x1B[${codes.join(";")}m${text}\x1B[0m` : text;
   return {
-    decision({ choices = [], currentChoices = [], details = [], sourcePath, title }) {
+    decision({
+      choices = [],
+      currentChoices = [],
+      details = [],
+      sourcePath,
+      suggestedChoices = [],
+      title
+    }) {
       const lines = [
         "",
         paint("=== Choice needed ===", ANSI.bold, ANSI.cyan),
@@ -10824,8 +10975,10 @@ function createTerminalUi(stream = process.stdout, environment = process.env) {
           paint("Choices", ANSI.bold),
           ...choices.map((choice, index) => {
             const current = currentChoices.includes(choice);
-            const label = `  [${index + 1}] ${choice}${current ? "  (current)" : ""}`;
-            return paint(label, current ? ANSI.green : ANSI.yellow);
+            const suggested = !current && suggestedChoices.includes(choice);
+            const marker = current ? "  (current)" : suggested ? "  (suggested)" : "";
+            const label = `  [${index + 1}] ${choice}${marker}`;
+            return paint(label, current || suggested ? ANSI.green : ANSI.yellow);
           })
         );
       }
